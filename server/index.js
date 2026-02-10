@@ -14,40 +14,39 @@ app.use(cors({
 const upload = multer({ dest: 'uploads/' });
 
 app.post('/merge', upload.array('pdfs'), (req, res) => {
-    const files = req.files.map(f => f.path);
-    const outputPath = `uploads/merged-${Date.now()}.pdf`;
+    try {
+        const rotations = req.body.rotations ? JSON.parse(req.body.rotations) : [];
+        const files = req.files.map((file, index) => `${file.path}:${rotations[index] || 0}`);
+        const outputPath = `uploads/merged-${Date.now()}.pdf`;
 
-    const pythonProcess = spawn('python', [
-        '../python_services/merge.py', 
-        ...files, 
-        outputPath
-    ]);
+        const pythonProcess = spawn('python', ['../python_services/merge.py', ...files, outputPath]);
 
-    pythonProcess.on('close', (code) => {
-        if (code === 0) {
-            // 2. We use the callback function inside res.download
-            res.download(outputPath, (err) => {
-                if (err) {
-                    console.error("Download error:", err);
-                }
+        let pythonError = "";
+        pythonProcess.stderr.on('data', (data) => {
+            pythonError += data.toString();
+        });
 
-                // 3. CLEANUP: This runs AFTER the download finishes or fails
-                console.log("Cleaning up files...");
-                
-                // Delete original uploaded parts
-                files.forEach(filePath => {
-                    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        pythonProcess.on('close', (code) => {
+            if (code === 0) {
+                // Return here so the function ends
+                return res.download(outputPath, (err) => {
+                    // Cleanup
+                    req.files.forEach(f => { if (fs.existsSync(f.path)) fs.unlinkSync(f.path); });
+                    if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
                 });
-
-                // Delete the final merged result
-                if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
-                
-                console.log("Cleanup complete! Disk is clean.");
-            });
-        } else {
-            res.status(500).send("Merging failed.");
-        }
-    });
+            } else {
+                console.error("Python Logic Error:", pythonError);
+                // Only send error if we haven't already
+                if (!res.headersSent) {
+                    return res.status(500).send("Merging failed.");
+                }
+            }
+        });
+    } catch (err) {
+        console.error("Server Error:", err);
+        if (!res.headersSent) return res.status(500).send("Server error.");
+    }
 });
+
 
 app.listen(5000, () => console.log("Server running on port 5000"));

@@ -7,13 +7,27 @@ function App() {
   const [isDragging, setIsDragging] = useState(false);
 
   const handleFileChange = (e) => {
-    setFiles([...e.target.files]);
+    const newFiles = Array.from(e.target.files).map(file => ({
+      id: window.crypto.randomUUID(), // Faster, safer ID
+      file: file,
+      preview: URL.createObjectURL(file),
+      rotation: 0
+    }));
+    setFiles(prev => [...prev, ...newFiles]);
   };
 
   const handleMerge = async () => {
+
     if (files.length < 2) return alert("Select at least 2 PDFs!");
     const formData = new FormData();
-    files.forEach((file) => formData.append('pdfs', file));
+
+    // Add files
+    files.forEach((fileObj) => {
+      formData.append('pdfs', fileObj.file);
+    });
+
+    const rotationData = files.map(f => f.rotation || 0);
+    formData.append('rotations', JSON.stringify(rotationData));
 
     setLoading(true);
     try {
@@ -63,6 +77,20 @@ function App() {
     setFiles((prevFiles) => prevFiles.filter((_, index) => index !== indexToRemove));
   };
 
+  const rotateFile = (id) => {
+    setFiles(prev => prev.map(f =>
+      f.id === id ? { ...f, rotation: (f.rotation + 90) % 360 } : f
+    ));
+  };
+
+  const moveFile = (index, direction) => {
+    const newFiles = [...files];
+    const nextIndex = index + direction;
+    if (nextIndex < 0 || nextIndex >= newFiles.length) return;
+    [newFiles[index], newFiles[nextIndex]] = [newFiles[nextIndex], newFiles[index]];
+    setFiles(newFiles);
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center py-12 px-4">
       {/* Header */}
@@ -110,25 +138,35 @@ function App() {
               </button>
             </div>
 
-            <ul className="space-y-2 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
-              {files.map((file, idx) => (
-                <li
-                  key={idx}
-                  className="flex items-center justify-between text-xs text-gray-600 bg-gray-50 p-2 rounded border border-gray-200 group hover:border-red-200 transition-colors"
-                >
-                  <span className="truncate max-w-[200px]">📄 {file.name}</span>
-                  <button
-                    onClick={() => removeFile(idx)}
-                    className="text-gray-400 hover:text-red-600 transition-colors p-1"
-                    title="Remove file"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                </li>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-6">
+              {files.map((fileObj, idx) => (
+                <div key={fileObj.id} className="relative bg-white border rounded-lg p-2 shadow-sm">
+                  {/* Note #1: Preview */}
+                  <div className="h-32 bg-gray-100 rounded overflow-hidden flex items-center justify-center">
+                    <embed
+                      loading="lazy"
+                      src={fileObj.preview}
+                      className="w-full h-full pointer-events-none"
+                      style={{ transform: `rotate(${fileObj.rotation}deg)` }}
+                    />
+                  </div>
+
+                  <div className="mt-2 flex justify-between items-center">
+                    <span className="text-[10px] truncate w-20">{fileObj.file.name}</span>
+
+                    <div className="flex gap-1">
+                      {/* Rotation Button */}
+                      <button onClick={() => rotateFile(fileObj.id)} className="p-1 hover:bg-gray-100 rounded text-xs">🔄</button>
+                      {/* Move Buttons */}
+                      <button onClick={() => moveFile(idx, -1)} className="p-1 hover:bg-gray-100 rounded text-xs">⬅️</button>
+                      <button onClick={() => moveFile(idx, 1)} className="p-1 hover:bg-gray-100 rounded text-xs">➡️</button>
+                      {/* Remove */}
+                      <button onClick={() => removeFile(fileObj.id)} className="p-1 hover:text-red-500 text-xs">❌</button>
+                    </div>
+                  </div>
+                </div>
               ))}
-            </ul>
+            </div>
           </div>
         )}
 
