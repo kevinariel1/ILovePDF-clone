@@ -9,39 +9,33 @@ function App() {
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [customName, setCustomName] = useState("merged_document");
 
-  const handleFileChange = async (e) => {
-    const selectedFiles = Array.from(e.target.files);
-
-    for (const file of selectedFiles) {
+  const processFiles = async (newFiles) => {
+    for (const file of newFiles) {
       const id = Math.random().toString(36).substr(2, 9);
-
-      // Add file with a loading state first
       setFiles(prev => [...prev, { id, file, thumbnail: null, rotation: 0 }]);
 
-      // Ask Node for a thumbnail
       const formData = new FormData();
       formData.append('pdf', file);
-
       try {
         const res = await axios.post('http://localhost:5000/get-thumbnail', formData);
-
-        // Update that specific file with its new thumbnail
-        setFiles(prev => prev.map(f =>
-          f.id === id ? { ...f, thumbnail: res.data.thumbnail } : f
-        ));
-      } catch (err) {
-        console.error("Thumbnail failed", err);
-      }
+        setFiles(prev => prev.map(f => f.id === id ? { ...f, thumbnail: res.data.thumbnail } : f));
+      } catch (err) { console.error(err); }
     }
   };
 
+  const handleFileChange = (e) => {
+    processFiles(Array.from(e.target.files));
+    e.target.value = "";
+  };
+
   const handleMerge = async () => {
-
     if (files.length < 2) return alert("Select at least 2 PDFs!");
-    const formData = new FormData();
 
-    // Add files
+    setLoading(true); // Start spinning
+
+    const formData = new FormData();
     files.forEach((fileObj) => {
       formData.append('pdfs', fileObj.file);
     });
@@ -49,20 +43,28 @@ function App() {
     const rotationData = files.map(f => f.rotation || 0);
     formData.append('rotations', JSON.stringify(rotationData));
 
-    setLoading(true);
     try {
       const response = await axios.post('http://localhost:5000/merge', formData, {
         responseType: 'blob',
       });
+
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', 'merged.pdf');
+      const fileName = `${customName || 'merged_document'}.pdf`;
+      link.setAttribute('download', fileName);
       document.body.appendChild(link);
       link.click();
-    } catch (err) {
-      alert("Something went wrong during merging.");
+
+      // Cleanup the link and the URL object
+      link.remove();
+      window.URL.revokeObjectURL(url);
+
+    } catch (error) {
+      console.error("Merge failed", error);
+      alert("Something went wrong during merging. Check the server console.");
     } finally {
+      // THIS IS THE FIX: This runs no matter what happens above
       setLoading(false);
     }
   };
@@ -79,18 +81,8 @@ function App() {
   const handleDrop = (e) => {
     e.preventDefault();
     setIsDragging(false);
-
-    // Get files from the event
-    const droppedFiles = [...e.dataTransfer.files];
-
-    // Filter for PDFs only
-    const pdfs = droppedFiles.filter(file => file.type === "application/pdf");
-
-    if (pdfs.length > 0) {
-      setFiles((prev) => [...prev, ...pdfs]);
-    } else {
-      alert("Please drop PDF files only!");
-    }
+    const pdfs = [...e.dataTransfer.files].filter(f => f.type === "application/pdf");
+    processFiles(pdfs);
   };
 
   const removeFile = (id) => {
@@ -176,6 +168,7 @@ function App() {
               <button onClick={() => setFiles([])} className="text-xs text-red-500 hover:underline font-medium">
                 Clear All
               </button>
+
             </div>
 
             <DndContext collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
@@ -195,22 +188,51 @@ function App() {
           </div>
         )}
 
-        {/* Action Button */}
-        <button
-          onClick={handleMerge}
-          disabled={loading || files.length < 2}
-          className={`w-full mt-6 py-3 px-4 rounded-lg font-bold text-white transition-all shadow-md
-            ${loading || files.length < 2
-              ? 'bg-gray-400 cursor-not-allowed'
-              : 'bg-red-600 hover:bg-red-700 active:transform active:scale-95'}`}
-        >
-          {loading ? (
-            <span className="flex items-center justify-center">
-              <svg className="animate-spin h-5 w-5 mr-3 border-t-2 border-white rounded-full" viewBox="0 0 24 24"></svg>
-              Merging...
-            </span>
-          ) : "Merge PDF"}
-        </button>
+        {files.length > 0 && (
+          <div className="mt-8 pt-6 border-t border-gray-100">
+            <div className="flex flex-col md:flex-row items-end gap-4">
+
+              {/* Filename Input (Left Side) */}
+              <div className="flex-1 w-full">
+                <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1 ml-1">
+                  Output Filename
+                </label>
+                <div className="relative group">
+                  <input
+                    type="text"
+                    value={customName}
+                    onChange={(e) => setCustomName(e.target.value)}
+                    className="w-full bg-white border border-gray-200 rounded-lg px-4 py-3 pr-12 text-sm font-medium outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 transition-all shadow-sm"
+                    placeholder="Name your file..."
+                  />
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-300 text-xs font-mono select-none">
+                    .pdf
+                  </span>
+                </div>
+              </div>
+
+              {/* Merge Button (Right Side) */}
+              <button
+                onClick={handleMerge}
+                disabled={loading || files.length < 2}
+                className={`flex-none h-11.5 px-8 rounded-lg font-bold text-white transition-all shadow-md flex items-center justify-center min-w-40
+          ${loading || files.length < 2
+                    ? 'bg-gray-400 cursor-not-allowed'
+                    : 'bg-red-600 hover:bg-red-700 active:scale-95'}`}
+              >
+                {loading ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4 mr-2 border-t-2 border-white rounded-full" viewBox="0 0 24 24"></svg>
+                    Merging...
+                  </>
+                ) : (
+                  "Merge PDF"
+                )}
+              </button>
+            </div>
+          </div>
+        )}
+
       </div>
 
       <footer className="mt-auto text-gray-400 text-sm">
