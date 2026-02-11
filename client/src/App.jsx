@@ -1,19 +1,39 @@
 import React, { useState } from 'react';
 import axios from 'axios';
+import { arrayMove } from '@dnd-kit/sortable';
+import { DndContext, closestCenter } from '@dnd-kit/core';
+import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { SortableFile } from '../components/SortableFile.jsx';
 
 function App() {
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
 
-  const handleFileChange = (e) => {
-    const newFiles = Array.from(e.target.files).map(file => ({
-      id: window.crypto.randomUUID(), // Faster, safer ID
-      file: file,
-      preview: URL.createObjectURL(file),
-      rotation: 0
-    }));
-    setFiles(prev => [...prev, ...newFiles]);
+  const handleFileChange = async (e) => {
+    const selectedFiles = Array.from(e.target.files);
+
+    for (const file of selectedFiles) {
+      const id = Math.random().toString(36).substr(2, 9);
+
+      // Add file with a loading state first
+      setFiles(prev => [...prev, { id, file, thumbnail: null, rotation: 0 }]);
+
+      // Ask Node for a thumbnail
+      const formData = new FormData();
+      formData.append('pdf', file);
+
+      try {
+        const res = await axios.post('http://localhost:5000/get-thumbnail', formData);
+
+        // Update that specific file with its new thumbnail
+        setFiles(prev => prev.map(f =>
+          f.id === id ? { ...f, thumbnail: res.data.thumbnail } : f
+        ));
+      } catch (err) {
+        console.error("Thumbnail failed", err);
+      }
+    }
   };
 
   const handleMerge = async () => {
@@ -73,8 +93,19 @@ function App() {
     }
   };
 
-  const removeFile = (indexToRemove) => {
-    setFiles((prevFiles) => prevFiles.filter((_, index) => index !== indexToRemove));
+  const removeFile = (id) => {
+    setFiles((prevFiles) => {
+      // 1. Find the file to be removed
+      const fileToRemove = prevFiles.find(f => f.id === id);
+
+      // 2. Revoke the URL to prevent memory leaks if you used createObjectURL
+      if (fileToRemove?.preview && fileToRemove.preview.startsWith('blob:')) {
+        URL.revokeObjectURL(fileToRemove.preview);
+      }
+
+      // 3. Filter it out
+      return prevFiles.filter((file) => file.id !== id);
+    });
   };
 
   const rotateFile = (id) => {
@@ -89,6 +120,18 @@ function App() {
     if (nextIndex < 0 || nextIndex >= newFiles.length) return;
     [newFiles[index], newFiles[nextIndex]] = [newFiles[nextIndex], newFiles[index]];
     setFiles(newFiles);
+  };
+
+  const handleDragEnd = (event) => {
+    const { active, over } = event;
+
+    if (active.id !== over.id) {
+      setFiles((items) => {
+        const oldIndex = items.findIndex((i) => i.id === active.id);
+        const newIndex = items.findIndex((i) => i.id === over.id);
+        return arrayMove(items, oldIndex, newIndex);
+      });
+    }
   };
 
   return (
@@ -127,46 +170,28 @@ function App() {
 
         {/* File List Area */}
         {files.length > 0 && (
-          <div className="mt-6 w-full">
-            <div className="flex justify-between items-center mb-2">
+          <div className="mt-6 w-full max-w-2xl mx-auto">
+            <div className="flex justify-between items-center mb-4">
               <h3 className="text-sm font-semibold text-gray-700">Selected Files ({files.length}):</h3>
-              <button
-                onClick={() => setFiles([])}
-                className="text-xs text-red-500 hover:underline font-medium"
-              >
+              <button onClick={() => setFiles([])} className="text-xs text-red-500 hover:underline font-medium">
                 Clear All
               </button>
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-6">
-              {files.map((fileObj, idx) => (
-                <div key={fileObj.id} className="relative bg-white border rounded-lg p-2 shadow-sm">
-                  {/* Note #1: Preview */}
-                  <div className="h-32 bg-gray-100 rounded overflow-hidden flex items-center justify-center">
-                    <embed
-                      loading="lazy"
-                      src={fileObj.preview}
-                      className="w-full h-full pointer-events-none"
-                      style={{ transform: `rotate(${fileObj.rotation}deg)` }}
+            <DndContext collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+              <SortableContext items={files.map(f => f.id)} strategy={verticalListSortingStrategy}>
+                <div className="space-y-3">
+                  {files.map((file) => (
+                    <SortableFile
+                      key={file.id}
+                      fileObj={file}
+                      removeFile={removeFile}
+                      rotateFile={rotateFile}
                     />
-                  </div>
-
-                  <div className="mt-2 flex justify-between items-center">
-                    <span className="text-[10px] truncate w-20">{fileObj.file.name}</span>
-
-                    <div className="flex gap-1">
-                      {/* Rotation Button */}
-                      <button onClick={() => rotateFile(fileObj.id)} className="p-1 hover:bg-gray-100 rounded text-xs">🔄</button>
-                      {/* Move Buttons */}
-                      <button onClick={() => moveFile(idx, -1)} className="p-1 hover:bg-gray-100 rounded text-xs">⬅️</button>
-                      <button onClick={() => moveFile(idx, 1)} className="p-1 hover:bg-gray-100 rounded text-xs">➡️</button>
-                      {/* Remove */}
-                      <button onClick={() => removeFile(fileObj.id)} className="p-1 hover:text-red-500 text-xs">❌</button>
-                    </div>
-                  </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              </SortableContext>
+            </DndContext>
           </div>
         )}
 

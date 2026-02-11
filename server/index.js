@@ -48,5 +48,18 @@ app.post('/merge', upload.array('pdfs'), (req, res) => {
     }
 });
 
+app.post('/get-thumbnail', upload.single('pdf'), (req, res) => {
+    const pythonProcess = spawn('python', ['../python_services/thumbnail.py', req.file.path]);
+    
+    let imageData = "";
+    pythonProcess.stdout.on('data', (data) => {
+        imageData += data.toString();
+    });
+
+    pythonProcess.on('close', () => {
+        res.json({ thumbnail: imageData.trim() });
+    });
+});
+
 
 app.listen(5000, () => console.log("Server running on port 5000"));
