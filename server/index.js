@@ -74,30 +74,69 @@ app.post("/get-thumbnail", upload.single("pdf"), (req, res) => {
   });
 });
 
-app.post('/get-all-thumbnails', upload.single('pdf'), (req, res) => {
-    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+app.post("/get-all-thumbnails", upload.single("pdf"), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
-    const pythonProcess = spawn('python', ['../python_services/all_thumbnails.py', req.file.path]);
-    
+  const pythonProcess = spawn("python", [
+    "../python_services/all_thumbnails.py",
+    req.file.path,
+  ]);
+
+  let result = "";
+
+  pythonProcess.stdout.on("data", (data) => {
+    result += data.toString(); // Collect all chunks
+  });
+
+  pythonProcess.on("close", (code) => {
+    try {
+      // Now that the process is closed, result has the FULL string
+      const parsedData = JSON.parse(result);
+
+      if (parsedData.error) {
+        return res.status(500).json({ error: parsedData.error });
+      }
+
+      res.json({ thumbnails: parsedData });
+    } catch (e) {
+      console.error("Parse Error! Check if Python is printing extra text.");
+      res.status(500).json({ error: "Invalid JSON from Python" });
+    }
+  });
+});
+
+app.post('/split', upload.single('pdf'), (req, res) => {
+    const { split_config, is_fused } = req.body; // Add is_fused here
+    const outputDir = path.join(__dirname, 'temp_splits');
+    if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir);
+
+    const scriptPath = path.resolve(__dirname, '../python_services/split_logic.py');
+    // Pass 4 arguments now
+    const pythonProcess = spawn('python', [scriptPath, req.file.path, outputDir, split_config, is_fused]);
+
     let result = "";
-
-    pythonProcess.stdout.on('data', (data) => {
-        result += data.toString(); // Collect all chunks
-    });
+    pythonProcess.stdout.on('data', (data) => result += data.toString());
+    pythonProcess.stderr.on('data', (data) => console.error(`Python Stderr: ${data}`));
 
     pythonProcess.on('close', (code) => {
         try {
-            // Now that the process is closed, result has the FULL string
-            const parsedData = JSON.parse(result);
-            
-            if (parsedData.error) {
-                return res.status(500).json({ error: parsedData.error });
-            }
+            const data = JSON.parse(result);
+            if (data.error) throw new Error(data.error);
 
-            res.json({ thumbnails: parsedData });
+            // Important: Set the correct Content-Type so the browser knows what it is
+            const contentType = data.type === 'zip' ? 'application/zip' : 'application/pdf';
+            res.setHeader('Content-Type', contentType);
+            
+            res.download(data.path, (err) => {
+                // Cleanup after a short delay to ensure the file is sent
+                setTimeout(() => {
+                    if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+                    // Only delete outputDir if you're sure no other processes are using it
+                }, 1000);
+            });
         } catch (e) {
-            console.error("Parse Error! Check if Python is printing extra text.");
-            res.status(500).json({ error: "Invalid JSON from Python" });
+            console.error("Split Logic Error:", e.message, "Raw Result:", result);
+            res.status(500).json({ error: "Split failed" });
         }
     });
 });
