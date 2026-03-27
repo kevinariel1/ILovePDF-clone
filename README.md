@@ -1,4 +1,4 @@
-I vibecoded this shit.
+I vibecoded this.
 
 -----------------------------------------------------------------------------
 Fullstack
